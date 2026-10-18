@@ -151,6 +151,13 @@ public class SailWindSystem {
                 Vector3d push = orient.transform(new Vector3d(ln.x, ln.y, ln.z).mul(-g.supportSign()));
                 sign += (push.x * axis.x + push.z * axis.z) * g.area();
             }
+            for (PolygonSailGroup pg : PolygonSailRegistry.getPolygons(s.getUniqueId())) {
+                if (pg.pushSign() == 0 || gameTime - pg.lastSeenTick() > 10)
+                    continue;
+                Vec3 ln = pg.localNormal();
+                Vector3d push = orient.transform(new Vector3d(ln.x, ln.y, ln.z).mul(pg.pushSign()));
+                sign += (push.x * axis.x + push.z * axis.z) * pg.area();
+            }
         }
         return sign;
     }
@@ -300,7 +307,7 @@ public class SailWindSystem {
             float reefed = FurlState.amount(sourceId, pg.masterMin());
             if (reefed >= 0.999f)
                 continue;
-            double factor = Math.min(1.0, (gameTime - pg.startTick()) / 60.0) * (1.0 - reefed);
+            double factor = Mth.clamp((gameTime - pg.startTick()) / 60.0, 0.0, 1.0) * (1.0 - reefed);
             pullAt(parentLevel, sailSource, sailPose, pg.localCenter(), pg.localNormal(), pg.area(),
                     factor, speedRatio, drive);
         }

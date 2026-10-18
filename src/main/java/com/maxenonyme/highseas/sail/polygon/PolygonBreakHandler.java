@@ -1,6 +1,8 @@
 package com.maxenonyme.highseas.sail.polygon;
 
 import com.maxenonyme.highseas.CreateHighSeas;
+import com.maxenonyme.highseas.sail.FurlState;
+import com.maxenonyme.highseas.sail.ReefSyncPayload;
 import dev.ryanhcode.sable.companion.SableCompanion;
 import dev.ryanhcode.sable.companion.SubLevelAccess;
 import net.minecraft.core.BlockPos;
@@ -28,9 +30,11 @@ public class PolygonBreakHandler {
             inserted = master.consumeInsertedForDrop();
             others.addAll(master.nodes());
             SubLevelAccess sub = SableCompanion.INSTANCE.getContaining(level, master.getBlockPos());
-            if (sub != null)
+            if (sub != null) {
                 PolygonSailRegistry.unpublish(sub.getUniqueId(), master.getBlockPos());
-            else
+                FurlState.dropReef(sub.getUniqueId(), master.getBlockPos().asLong());
+                ReefSyncPayload.broadcast(sub.getUniqueId());
+            } else
                 master.unpublish();
             master.unlink();
         }

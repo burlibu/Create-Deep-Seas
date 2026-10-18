@@ -29,40 +29,31 @@ public class PolygonFurlDriver {
             return;
 
         SubLevelAccess sub = SableCompanion.INSTANCE.getContaining(server, master.getBlockPos());
-        UUID subId = sub == null ? null : sub.getUniqueId();
-        boolean attached = behavior.isAttached();
-        if (!attached) {
-            if (subId != null && FurlState.onHalyard(subId, master.getBlockPos())) {
-                FurlState.dropReef(subId, master.getBlockPos().asLong());
-                ReefSyncPayload.broadcast(subId);
-            }
-            master.setDeployment(1.0f);
-            master.ropeState().reset();
-            return;
-        }
-
-        ServerRopeStrand strand = strand(behavior);
-        if (strand == null)
-            return;
-        double length = length(strand);
         RopeState state = master.ropeState();
-        if (state.restLength < 0.0) {
-            state.restLength = length;
+        ServerRopeStrand strand = behavior.isAttached() ? strand(behavior) : null;
+        if (strand == null) {
+            // Losing the winch freezes the sail where it is; only the length baseline is dropped so
+            // a newly tied rope starts measuring from its own length.
+            state.lastLength = -1.0;
+        } else {
+            double length = length(strand);
+            if (state.lastLength >= 0.0 && Math.abs(length - state.lastLength) > MOVED) {
+                double delta = length - state.lastLength;
+                double travel = Math.max(0.5, Math.sqrt(master.area()) * TRAVEL_UNIT);
+                float change = (float) (-delta / travel);
+                master.setDeployment(master.deployment() + change);
+            }
             state.lastLength = length;
         }
-        if (state.lastLength >= 0.0 && Math.abs(length - state.lastLength) > MOVED) {
-            double delta = length - state.lastLength;
-            double travel = Math.max(0.5, Math.sqrt(master.area()) * TRAVEL_UNIT);
-            float change = (float) (-delta / travel);
-            master.setDeployment(master.deployment() + change);
-        }
-        state.lastLength = length;
 
-        float reef = 1.0f - master.deployment();
-        if (subId == null)
+        // Publish every tick, rope or not: FurlState is not persisted, the deployment is.
+        if (sub == null)
             return;
+        UUID subId = sub.getUniqueId();
+        float reef = 1.0f - master.deployment();
         FurlState.setReef(subId, master.getBlockPos().asLong(), reef);
-        if (Math.abs(reef - state.lastSyncedReef) >= SYNC_STEP || reef <= 0.0f || reef >= 1.0f) {
+        boolean extreme = reef <= 0.0f || reef >= 1.0f;
+        if (reef != state.lastSyncedReef && (extreme || Math.abs(reef - state.lastSyncedReef) >= SYNC_STEP)) {
             state.lastSyncedReef = reef;
             ReefSyncPayload.broadcast(subId);
         }
@@ -78,14 +69,7 @@ public class PolygonFurlDriver {
     }
 
     public static class RopeState {
-        public double restLength = -1.0;
         public double lastLength = -1.0;
         public float lastSyncedReef = -1.0f;
-
-        public void reset() {
-            restLength = -1.0;
-            lastLength = -1.0;
-            lastSyncedReef = -1.0f;
-        }
     }
 }

@@ -285,14 +285,15 @@ public class WindSailNodeBlockEntity extends SmartBlockEntity implements RopeStr
                 }
                 return;
             }
-            long now = server.getGameTime();
+            // Same clock as SailWindSystem: level game time would make the ramp-in factor negative.
+            long now = server.getServer().getTickCount();
             if (startTick < 0)
                 startTick = now;
             UUID id = sub.getUniqueId();
             if (publishedSub != null && !publishedSub.equals(id))
                 PolygonSailRegistry.unpublish(publishedSub, worldPosition);
             PolygonSailRegistry.publish(id, worldPosition,
-                    new PolygonSailGroup(localCenter, localNormal, area, worldPosition, startTick, now));
+                    new PolygonSailGroup(localCenter, localNormal, area, worldPosition, pushSign(), startTick, now));
             publishedSub = id;
             PolygonFurlDriver.tick(this);
         } else if (publishedSub != null) {
@@ -300,6 +301,24 @@ public class WindSailNodeBlockEntity extends SmartBlockEntity implements RopeStr
             publishedSub = null;
             startTick = -1L;
         }
+    }
+
+    /**
+     * Nodes stick out of their support blocks, so their facings tell which side of the canvas the
+     * mast is on; the wind drives the hull away from it, like a legacy sail's support side.
+     */
+    private int pushSign() {
+        if (level == null)
+            return 0;
+        double sum = 0.0;
+        for (BlockPos p : nodes) {
+            BlockState state = level.getBlockState(p);
+            if (!state.hasProperty(FACING))
+                continue;
+            Vec3i n = state.getValue(FACING).getNormal();
+            sum += n.getX() * localNormal.x + n.getY() * localNormal.y + n.getZ() * localNormal.z;
+        }
+        return sum > 0.5 ? 1 : sum < -0.5 ? -1 : 0;
     }
 
     public PolygonFurlDriver.RopeState ropeState() {
