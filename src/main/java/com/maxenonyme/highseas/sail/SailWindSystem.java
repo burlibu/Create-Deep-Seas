@@ -1,6 +1,8 @@
 package com.maxenonyme.highseas.sail;
 
 import com.maxenonyme.createsubmarine.submarine.util.SablePhysicsHelper;
+import com.maxenonyme.highseas.sail.polygon.PolygonSailGroup;
+import com.maxenonyme.highseas.sail.polygon.PolygonSailRegistry;
 import com.maxenonyme.highseas.wind.WindConfig;
 import com.maxenonyme.highseas.wind.WindManager;
 import com.maxenonyme.highseas.wind.WindSample;
@@ -194,18 +196,23 @@ public class SailWindSystem {
 
     private static void pull(ServerLevel level, ServerSubLevel source, Pose3dc sailPose, SailGroup group,
             double factor, double speedRatio, Drive drive) {
-        if (!BoatClassifier.inAir(level, source, group.localCenter()))
+        pullAt(level, source, sailPose, group.localCenter(), group.localNormal(), group.area(),
+                factor, speedRatio, drive);
+    }
+
+    private static void pullAt(ServerLevel level, ServerSubLevel source, Pose3dc sailPose,
+                               Vec3 localCenter, Vec3 localNormal, double area,
+                               double factor, double speedRatio, Drive drive) {
+        if (!BoatClassifier.inAir(level, source, localCenter))
             return;
-        Vec3 point = group.localCenter();
-        Vector3d worldCenter = sailPose.transformPosition(new Vector3d(point.x, point.y, point.z));
-        Vec3 ln = group.localNormal();
-        Vector3d normal = sailPose.orientation().transform(new Vector3d(ln.x, ln.y, ln.z));
+        Vector3d worldCenter = sailPose.transformPosition(new Vector3d(localCenter.x, localCenter.y, localCenter.z));
+        Vector3d normal = sailPose.orientation().transform(new Vector3d(localNormal.x, localNormal.y, localNormal.z));
         normal.y = 0.0;
         if (normal.lengthSquared() < 1.0e-9)
             return;
         normal.normalize();
         Vec3 wind = WindManager.getWind(level, worldCenter.x, worldCenter.y, worldCenter.z).vector();
-        double canvas = group.area() * factor;
+        double canvas = area * factor;
         double eff = drive.afloat ? SailForce.efficiency(wind, normal.x, normal.z, drive.keel)
                 : SailForce.facing(wind, normal.x, normal.z);
         drive.canvas += canvas;
@@ -228,7 +235,9 @@ public class SailWindSystem {
             return;
         }
         List<SailGroup> sails = SailWindRegistry.getSails(sailSource, gameTime);
-        if (sails.isEmpty()) {
+        UUID sourceId = sailSource.getUniqueId();
+        List<PolygonSailGroup> polygons = PolygonSailRegistry.getPolygons(sourceId);
+        if (sails.isEmpty() && polygons.isEmpty()) {
             return;
         }
 
@@ -266,13 +275,34 @@ public class SailWindSystem {
             drive.dragXZ += drag * normal.x * normal.z;
             drive.dragZZ += drag * normal.z * normal.z;
         }
-        UUID sourceId = sailSource.getUniqueId();
+        for (PolygonSailGroup pg : polygons) {
+            if (gameTime - pg.lastSeenTick() > 10)
+                continue;
+            Vector3d normal = sailPose.orientation().transform(new Vector3d(pg.localNormal().x, pg.localNormal().y, pg.localNormal().z));
+            if (Math.abs(normal.y) > 0.95)
+                continue;
+            double drag = pg.area() * DimensionPhysicsData.getAirPressure(parentLevel,
+                    sailPose.transformPosition(new Vector3d(pg.localCenter().x, pg.localCenter().y, pg.localCenter().z)));
+            drive.dragXX += drag * normal.x * normal.x;
+            drive.dragXZ += drag * normal.x * normal.z;
+            drive.dragZZ += drag * normal.z * normal.z;
+        }
         for (SailGroup group : sails) {
             float reefed = FurlState.amount(sourceId, group.min());
             if (group.axis() == Direction.Axis.Y || reefed >= 0.999f)
                 continue;
             double factor = Math.min(1.0, (gameTime - group.startTick()) / 60.0) * (1.0 - reefed);
             pull(parentLevel, sailSource, sailPose, group, factor, speedRatio, drive);
+        }
+        for (PolygonSailGroup pg : polygons) {
+            if (gameTime - pg.lastSeenTick() > 10)
+                continue;
+            float reefed = FurlState.amount(sourceId, pg.masterMin());
+            if (reefed >= 0.999f)
+                continue;
+            double factor = Math.min(1.0, (gameTime - pg.startTick()) / 60.0) * (1.0 - reefed);
+            pullAt(parentLevel, sailSource, sailPose, pg.localCenter(), pg.localNormal(), pg.area(),
+                    factor, speedRatio, drive);
         }
         for (DecayingSail ds : SailWindRegistry.getDecayingSails(sourceId, gameTime)) {
             if (ds.group().axis() == Direction.Axis.Y)

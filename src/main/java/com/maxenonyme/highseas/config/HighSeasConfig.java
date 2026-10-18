@@ -40,6 +40,10 @@ public class HighSeasConfig {
     public static int sailSubdivisions = 4;
     public static boolean seaglideScreenEffects = true;
 
+    public static double polygonSailBlockPerArea = 1.0;
+    public static int polygonMaxEdge = 32;
+    public static double polygonMinArea = 0.1;
+
     public static final ModConfigSpec SERVER_SPEC;
     public static final ModConfigSpec CLIENT_SPEC;
 
@@ -76,6 +80,10 @@ public class HighSeasConfig {
 
     private static final ModConfigSpec.IntValue SAIL_SUBDIVISIONS;
     private static final ModConfigSpec.BooleanValue SEAGLIDE_SCREEN_EFFECTS;
+
+    private static final ModConfigSpec.DoubleValue POLYGON_SAIL_BLOCK_PER_AREA;
+    private static final ModConfigSpec.IntValue POLYGON_MAX_EDGE;
+    private static final ModConfigSpec.DoubleValue POLYGON_MIN_AREA;
 
     static {
         ModConfigSpec.Builder server = new ModConfigSpec.Builder();
@@ -184,6 +192,19 @@ public class HighSeasConfig {
                 .defineInRange("buoyMaxSinkSpeed", 6.0, 0.0, 100.0);
         server.pop();
 
+        server.push("polygonSails");
+        POLYGON_SAIL_BLOCK_PER_AREA = server
+                .comment("Sail Blocks consumed per m² of procedural sail area, rounded up.",
+                        "1.0 = roughly one block per 1x1 panel of sail; raise to make big sails costlier.")
+                .defineInRange("sailBlockPerArea", 1.0, 0.1, 10.0);
+        POLYGON_MAX_EDGE = server
+                .comment("Maximum distance in blocks between two linked Wind Sail Nodes.")
+                .defineInRange("maxEdge", 32, 1, 128);
+        POLYGON_MIN_AREA = server
+                .comment("Minimum polygon area (m²) accepted when closing a sail. Guards against collinear or crossed quads.")
+                .defineInRange("minArea", 0.1, 0.001, 10.0);
+        server.pop();
+
         server.push("anchor");
         ANCHOR_MASS = server
                 .comment("Mass a dropped anchor pins the ship with once it bites the sea floor.",
@@ -253,6 +274,10 @@ public class HighSeasConfig {
         anchorMass = ANCHOR_MASS.get();
 
         boatSelfRighting = BOAT_SELF_RIGHTING.get();
+
+        polygonSailBlockPerArea = POLYGON_SAIL_BLOCK_PER_AREA.get();
+        polygonMaxEdge = POLYGON_MAX_EDGE.get();
+        polygonMinArea = POLYGON_MIN_AREA.get();
     }
 
     private static void pullClient() {

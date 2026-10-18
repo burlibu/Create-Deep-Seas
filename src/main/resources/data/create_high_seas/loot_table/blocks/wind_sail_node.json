@@ -1,0 +1,14 @@
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "bonus_rolls": 0.0,
+      "conditions": [ { "condition": "minecraft:survives_explosion" } ],
+      "entries": [
+        { "type": "minecraft:item", "name": "create_high_seas:wind_sail_node" }
+      ],
+      "rolls": 1.0
+    }
+  ],
+  "random_sequence": "create_high_seas:blocks/wind_sail_node"
+}

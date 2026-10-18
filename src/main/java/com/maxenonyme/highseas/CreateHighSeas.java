@@ -10,6 +10,11 @@ import com.mojang.logging.LogUtils;
 import com.maxenonyme.highseas.system.FluentWatersJukebox;
 import com.maxenonyme.highseas.block.entity.HalyardBlockEntity;
 import com.maxenonyme.highseas.sail.SailRigging;
+import com.maxenonyme.highseas.sail.polygon.PolygonLinkStatePayload;
+import com.maxenonyme.highseas.sail.polygon.PolygonLinker;
+import com.maxenonyme.highseas.sail.polygon.PolygonRopeHandler;
+import com.maxenonyme.highseas.sail.polygon.WindSailNodeBlock;
+import com.maxenonyme.highseas.sail.polygon.WindSailNodeBlockEntity;
 import com.maxenonyme.highseas.item.FluentWatersDiscItem;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
@@ -232,6 +237,20 @@ public class CreateHighSeas {
     public static final Supplier<Item> SAIL_ITEM = ITEMS.register("white_sail",
             () -> new BlockItem(SAILS.get(DyeColor.WHITE).get(), new Item.Properties()));
 
+    public static final Supplier<Block> WIND_SAIL_NODE = BLOCKS.register("wind_sail_node",
+            () -> new WindSailNodeBlock(BlockBehaviour.Properties.ofFullCopy(Blocks.COPPER_BLOCK)
+                    .noOcclusion()
+                    .noCollission()
+                    .isViewBlocking((state, level, pos) -> false)
+                    .isSuffocating((state, level, pos) -> false)));
+    public static final Supplier<Item> WIND_SAIL_NODE_ITEM = ITEMS.register("wind_sail_node",
+            () -> new BlockItem(WIND_SAIL_NODE.get(), new Item.Properties()));
+    public static final Supplier<BlockEntityType<WindSailNodeBlockEntity>> WIND_SAIL_NODE_BE = BLOCK_ENTITIES.register(
+            "wind_sail_node",
+            () -> BlockEntityType.Builder.of(
+                    (pos, state) -> new WindSailNodeBlockEntity(CreateHighSeas.WIND_SAIL_NODE_BE.get(), pos, state),
+                    WIND_SAIL_NODE.get()).build(null));
+
     public CreateHighSeas(IEventBus modEventBus, ModContainer modContainer) {
         modContainer.registerConfig(ModConfig.Type.SERVER,
                 HighSeasConfig.SERVER_SPEC);
@@ -259,6 +278,9 @@ public class CreateHighSeas {
         NeoForge.EVENT_BUS.addListener(BoatEngineBlock::onBlockPlace);
         NeoForge.EVENT_BUS.addListener(FluentWatersJukebox::onServerTick);
         NeoForge.EVENT_BUS.addListener(SailRigging::onRightClick);
+        NeoForge.EVENT_BUS.addListener(PolygonLinker::onRightClick);
+        NeoForge.EVENT_BUS.addListener(PolygonLinker::onLogout);
+        NeoForge.EVENT_BUS.addListener(PolygonRopeHandler::onRightClick);
         NeoForge.EVENT_BUS.addListener(SeaglideAttackGuard::onLeftClickBlock);
         NeoForge.EVENT_BUS.addListener(SeaglideAttackGuard::onAttackEntity);
         NeoForge.EVENT_BUS.addListener(HighSeasLifecycleHandler::onServerStopping);
@@ -338,6 +360,10 @@ public class CreateHighSeas {
                 EngineStatePayload.TYPE,
                 EngineStatePayload.CODEC,
                 EngineStatePayload::handle);
+        registrar.playToClient(
+                PolygonLinkStatePayload.TYPE,
+                PolygonLinkStatePayload.CODEC,
+                PolygonLinkStatePayload::handle);
     }
 
     @SuppressWarnings("unchecked")
@@ -365,6 +391,8 @@ public class CreateHighSeas {
             itemToSection.put(ResourceLocation.fromNamespaceAndPath(MOD_ID, "buoy"), highSeasSection);
             tabItems.add(SAIL_ITEM::get);
             itemToSection.put(ResourceLocation.fromNamespaceAndPath(MOD_ID, "white_sail"), highSeasSection);
+            tabItems.add(WIND_SAIL_NODE_ITEM::get);
+            itemToSection.put(ResourceLocation.fromNamespaceAndPath(MOD_ID, "wind_sail_node"), highSeasSection);
             tabItems.add(MUSIC_DISC_HIDDEN_BETWEEN_FLUENT_WATERS::get);
             itemToSection.put(ResourceLocation.fromNamespaceAndPath(MOD_ID, "music_disc_hidden_between_fluent_waters"), highSeasSection);
         } catch (ReflectiveOperationException | ClassCastException e) {

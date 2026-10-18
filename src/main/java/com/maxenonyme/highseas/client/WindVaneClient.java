@@ -32,5 +32,7 @@ public class WindVaneClient {
         event.registerBlockEntityRenderer(CreateHighSeas.ANCHOR_BE.get(), RopeHolderRenderer::new);
         event.registerBlockEntityRenderer(CreateHighSeas.BUOY_BE.get(), RopeHolderRenderer::new);
         event.registerBlockEntityRenderer(CreateHighSeas.HALYARD_BE.get(), RopeHolderRenderer::new);
+        event.registerBlockEntityRenderer(CreateHighSeas.WIND_SAIL_NODE_BE.get(),
+                com.maxenonyme.highseas.sail.polygon.client.WindSailNodeBlockEntityRenderer::new);
     }
 }

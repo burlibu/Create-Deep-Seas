@@ -1,0 +1,33 @@
+{
+  "credit": "Create High Seas",
+  "textures": {
+    "plate": "minecraft:block/iron_block",
+    "pin": "minecraft:block/polished_andesite",
+    "particle": "minecraft:block/iron_block"
+  },
+  "elements": [
+    {
+      "from": [5, 0, 5],
+      "to":   [11, 2, 11],
+      "faces": {
+        "down":  { "uv": [5, 5, 11, 11], "texture": "#plate", "cullface": "down" },
+        "up":    { "uv": [5, 5, 11, 11], "texture": "#plate" },
+        "north": { "uv": [5, 14, 11, 16], "texture": "#plate" },
+        "south": { "uv": [5, 14, 11, 16], "texture": "#plate" },
+        "west":  { "uv": [5, 14, 11, 16], "texture": "#plate" },
+        "east":  { "uv": [5, 14, 11, 16], "texture": "#plate" }
+      }
+    },
+    {
+      "from": [6.5, 2, 6.5],
+      "to":   [9.5, 5, 9.5],
+      "faces": {
+        "up":    { "uv": [6.5, 6.5, 9.5, 9.5], "texture": "#pin" },
+        "north": { "uv": [6.5, 11, 9.5, 14],    "texture": "#pin" },
+        "south": { "uv": [6.5, 11, 9.5, 14],    "texture": "#pin" },
+        "west":  { "uv": [6.5, 11, 9.5, 14],    "texture": "#pin" },
+        "east":  { "uv": [6.5, 11, 9.5, 14],    "texture": "#pin" }
+      }
+    }
+  ]
+}

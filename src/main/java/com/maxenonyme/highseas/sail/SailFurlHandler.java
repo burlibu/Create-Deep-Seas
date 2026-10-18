@@ -11,6 +11,7 @@ public class SailFurlHandler {
 
     public static void onServerStarted(ServerStartedEvent event) {
         FurlState.clearAll();
+        com.maxenonyme.highseas.sail.polygon.PolygonSailRegistry.clearAll();
     }
 
     public static void onLogin(PlayerEvent.PlayerLoggedInEvent event) {
