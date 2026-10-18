@@ -1,6 +1,9 @@
 package com.maxenonyme.highseas.sail.polygon;
 
-import com.simibubi.create.api.equipment.goggles.IHaveGoggleInformation;
+import com.maxenonyme.highseas.CreateHighSeas;
+import com.simibubi.create.api.equipment.goggles.IHaveHoveringInformation;
+import com.simibubi.create.foundation.utility.CreateLang;
+import net.createmod.catnip.lang.LangBuilder;
 import com.simibubi.create.foundation.blockEntity.SmartBlockEntity;
 import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour;
 import dev.ryanhcode.sable.companion.SableCompanion;
@@ -17,6 +20,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.LongArrayTag;
 import net.minecraft.world.item.DyeColor;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DirectionProperty;
@@ -29,7 +33,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-public class WindSailNodeBlockEntity extends SmartBlockEntity implements RopeStrandHolderBlockEntity, IHaveGoggleInformation {
+public class WindSailNodeBlockEntity extends SmartBlockEntity implements RopeStrandHolderBlockEntity, IHaveHoveringInformation {
 
     public static final DirectionProperty FACING = BlockStateProperties.FACING;
 
@@ -319,31 +323,59 @@ public class WindSailNodeBlockEntity extends SmartBlockEntity implements RopeStr
     }
 
     @Override
-    public boolean addToGoggleTooltip(List<Component> tooltip, boolean isPlayerSneaking) {
-        Component header = Component.translatable("create_high_seas.polygon.goggle.header").withStyle(ChatFormatting.GRAY);
-        tooltip.add(Component.literal("    ").append(header));
+    public ItemStack getIcon(boolean isPlayerSneaking) {
+        return new ItemStack(CreateHighSeas.SAIL_ITEM.get());
+    }
+
+    @Override
+    public boolean addToTooltip(List<Component> tooltip, boolean isPlayerSneaking) {
+        lang().translate("polygon.goggle.header").forGoggles(tooltip);
 
         WindSailNodeBlockEntity m = resolveMaster();
-        if (m == null) {
-            tooltip.add(Component.literal("      ")
-                    .append(Component.translatable("create_high_seas.polygon.goggle.unlinked")
-                            .withStyle(ChatFormatting.DARK_GRAY)));
+        if (m == null || !m.isMaster()) {
+            lang().translate("polygon.goggle.unlinked").style(ChatFormatting.DARK_GRAY).forGoggles(tooltip, 1);
+            lang().translate("polygon.goggle.link_hint").style(ChatFormatting.DARK_GRAY).forGoggles(tooltip, 1);
             return true;
         }
 
-        tooltip.add(Component.literal("      ")
-                .append(Component.translatable("create_high_seas.polygon.goggle.material",
-                        m.materialInserted, m.materialRequired)
-                        .withStyle(m.isConstructed() ? ChatFormatting.GREEN : ChatFormatting.YELLOW)));
-        tooltip.add(Component.literal("      ")
-                .append(Component.translatable("create_high_seas.polygon.goggle.area", m.area)
-                        .withStyle(ChatFormatting.AQUA)));
-        if (m.isConstructed()) {
-            int percent = Math.round(m.deployment * 100.0f);
-            tooltip.add(Component.literal("      ")
-                    .append(Component.translatable("create_high_seas.polygon.goggle.deployment", percent)
-                            .withStyle(ChatFormatting.AQUA)));
+        int required = Math.max(1, m.materialRequired);
+        int inserted = Math.min(m.materialInserted, required);
+        boolean done = m.isConstructed();
+
+        lang().translate("polygon.goggle.material").style(ChatFormatting.GRAY).forGoggles(tooltip);
+        CreateLang.builder()
+                .add(CreateLang.number(inserted).style(done ? ChatFormatting.GREEN : ChatFormatting.GOLD))
+                .text(ChatFormatting.GRAY, " / ")
+                .add(CreateLang.number(m.materialRequired).style(ChatFormatting.DARK_GRAY))
+                .forGoggles(tooltip, 1);
+        int filled = Math.round(PROGRESS_BAR_LENGTH * inserted / (float) required);
+        CreateLang.builder()
+                .text(done ? ChatFormatting.GREEN : ChatFormatting.GOLD, "█".repeat(filled))
+                .text(ChatFormatting.DARK_GRAY, "▒".repeat(PROGRESS_BAR_LENGTH - filled))
+                .forGoggles(tooltip, 1);
+
+        if (!done) {
+            lang().translate("polygon.goggle.missing", required - inserted)
+                    .style(ChatFormatting.YELLOW).forGoggles(tooltip, 1);
+            lang().translate("polygon.goggle.fill_hint").style(ChatFormatting.DARK_GRAY).forGoggles(tooltip, 1);
+            return true;
         }
+
+        lang().translate("polygon.goggle.complete").style(ChatFormatting.GREEN).forGoggles(tooltip, 1);
+        lang().translate("polygon.goggle.area").style(ChatFormatting.GRAY)
+                .space()
+                .add(CreateLang.number(m.area).text(" m²").style(ChatFormatting.AQUA))
+                .forGoggles(tooltip);
+        lang().translate("polygon.goggle.deployment").style(ChatFormatting.GRAY)
+                .space()
+                .add(CreateLang.number(Math.round(m.deployment * 100.0f)).text("%").style(ChatFormatting.AQUA))
+                .forGoggles(tooltip);
         return true;
+    }
+
+    private static final int PROGRESS_BAR_LENGTH = 20;
+
+    private static LangBuilder lang() {
+        return new LangBuilder(CreateHighSeas.MOD_ID);
     }
 }

@@ -110,6 +110,7 @@ public class WindSailNodeBlock extends DirectionalBlock implements EntityBlock, 
     @Override
     public void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
         if (!state.is(newState.getBlock()) && !level.isClientSide) {
+            PolygonLinker.onNodeRemoved(level, pos);
             BlockEntity be = level.getBlockEntity(pos);
             if (be instanceof WindSailNodeBlockEntity node)
                 PolygonBreakHandler.onBreak(level, pos, node, null);

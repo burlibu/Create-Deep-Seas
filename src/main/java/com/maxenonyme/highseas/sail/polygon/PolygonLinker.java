@@ -4,6 +4,8 @@ import com.maxenonyme.highseas.CreateHighSeas;
 import com.maxenonyme.highseas.config.HighSeasConfig;
 import dev.ryanhcode.sable.companion.SableCompanion;
 import dev.ryanhcode.sable.companion.SubLevelAccess;
+import dev.simulated_team.simulated.content.items.rope.RopeItem.RopeItem;
+import dev.simulated_team.simulated.index.SimDataComponents;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -42,17 +44,21 @@ public class PolygonLinker {
     }
 
     public static void onRightClick(PlayerInteractEvent.RightClickBlock event) {
-        Player player = event.getEntity();
-        if (player.level().isClientSide)
+        if (event.getHand() != InteractionHand.MAIN_HAND)
             return;
+        Player player = event.getEntity();
         Level level = event.getLevel();
         BlockPos pos = event.getPos();
-        ItemStack hand = event.getItemStack();
         if (!(level.getBlockState(pos).getBlock() instanceof WindSailNodeBlock))
             return;
-        if (!hand.isEmpty())
+
+        boolean sessionActive = level.isClientSide
+                ? !PolygonLinkPreview.snapshot().isEmpty()
+                : SESSIONS.containsKey(player.getUUID());
+        if (!triggersLinking(level, pos, event.getItemStack(), player.isShiftKeyDown(), sessionActive))
             return;
 
+        // Cancel on both sides so a rope never starts its own connection on the first click.
         event.setCanceled(true);
         event.setCancellationResult(InteractionResult.SUCCESS);
 
@@ -125,6 +131,41 @@ public class PolygonLinker {
         playSound(level, pos, 1.1f);
     }
 
+    /**
+     * Empty main hand always drives the linker. A rope does too, unless it already holds a pending
+     * connection or targets a formed polygon outside a session: then it is rigging a winch.
+     */
+    private static boolean triggersLinking(Level level, BlockPos pos, ItemStack hand, boolean sneaking,
+                                           boolean sessionActive) {
+        if (hand.isEmpty())
+            return true;
+        if (!(hand.getItem() instanceof RopeItem))
+            return false;
+        if (hand.get(SimDataComponents.ROPE_FIRST_CONNECTION) != null)
+            return false;
+        if (sessionActive)
+            return true;
+        if (sneaking)
+            return false;
+        return !(level.getBlockEntity(pos) instanceof WindSailNodeBlockEntity node) || !node.isLinked();
+    }
+
+    /** Aborts every linking session that includes {@code pos}, clearing the owner's preview. */
+    public static void onNodeRemoved(Level level, BlockPos pos) {
+        if (level.isClientSide || level.getServer() == null)
+            return;
+        SESSIONS.entrySet().removeIf(entry -> {
+            if (!entry.getValue().nodes.contains(pos))
+                return false;
+            ServerPlayer owner = level.getServer().getPlayerList().getPlayer(entry.getKey());
+            if (owner != null) {
+                broadcastState(owner, List.of());
+                tell(owner, "message.create_high_seas.polygon.linking_cancelled", ChatFormatting.YELLOW);
+            }
+            return true;
+        });
+    }
+
     private static void attemptClose(ServerPlayer player, Level level, Session session) {
         if (session.nodes.size() < 3) {
             tell(player, "message.create_high_seas.polygon.degenerate", ChatFormatting.RED);
@@ -164,7 +205,8 @@ public class PolygonLinker {
 
         SESSIONS.remove(player.getUUID());
         broadcastState(player, List.of());
-        tell(player, "message.create_high_seas.polygon.closed", ChatFormatting.GREEN);
+        player.displayClientMessage(Component.translatable("message.create_high_seas.polygon.closed", required)
+                .withStyle(ChatFormatting.GREEN), true);
         level.playSound(null, masterPos, SoundEvents.WOOL_PLACE, SoundSource.BLOCKS, 0.6f, 1.3f);
     }
 

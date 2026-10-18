@@ -2,33 +2,60 @@ package com.maxenonyme.highseas.sail.polygon.client;
 
 import com.maxenonyme.highseas.sail.FurlState;
 import com.maxenonyme.highseas.sail.polygon.WindSailNodeBlockEntity;
+import com.maxenonyme.highseas.wind.WindManager;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.PoseStack.Pose;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.ryanhcode.sable.companion.SableCompanion;
 import dev.ryanhcode.sable.companion.SubLevelAccess;
+import dev.ryanhcode.sable.companion.math.Pose3dc;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
 import net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider;
-import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.Mth;
 import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
+import org.joml.Vector3d;
 
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.WeakHashMap;
 
+/**
+ * Renders a constructed polygon sail as a tessellated bilinear patch between its node tips. Each
+ * grid cell carries one full canvas tile so the cloth reads like Create sails; the patch bellies
+ * out with the local wind and flutters slightly, and furling pulls the lower edge up to the yard.
+ */
 public class WindSailNodeBlockEntityRenderer implements BlockEntityRenderer<WindSailNodeBlockEntity> {
 
-    private static final ResourceLocation CANVAS = ResourceLocation.fromNamespaceAndPath("create", "block/sail/canvas_white");
+    private static final double NODE_TIP = 5.0 / 16.0;
+    private static final int MAX_SEGMENTS = 24;
+    private static final double IDLE_FILL = 0.35;
+    private static final double MAX_BELLY = 1.1;
+    private static final double BELLY_PER_SPAN = 0.12;
+    private static final double FLUTTER = 0.035;
+
+    private static final class WindState {
+        double fill = -1.0;
+        double sign = 1.0;
+        long lastTick = Long.MIN_VALUE;
+    }
+
+    private final Map<WindSailNodeBlockEntity, WindState> windStates = new WeakHashMap<>();
 
     public WindSailNodeBlockEntityRenderer(BlockEntityRendererProvider.Context context) {
     }
@@ -45,61 +72,98 @@ public class WindSailNodeBlockEntityRenderer implements BlockEntityRenderer<Wind
         if (level == null)
             return;
 
-        float deployment = effectiveDeployment(level, be);
-
         BlockPos master = be.getBlockPos();
-        List<Vec3> local = new ArrayList<>(nodes.size());
-        for (BlockPos p : nodes) {
-            local.add(new Vec3(p.getX() + 0.5 - master.getX(),
-                    p.getY() + 0.5 - master.getY(),
-                    p.getZ() + 0.5 - master.getZ()));
+        int n = nodes.size();
+        Vec3[] anchors = new Vec3[n];
+        int[] lights = new int[n];
+        for (int i = 0; i < n; i++) {
+            BlockPos p = nodes.get(i);
+            anchors[i] = tip(level, p).subtract(master.getX(), master.getY(), master.getZ());
+            lights[i] = LevelRenderer.getLightColor(level, p);
         }
 
-        int topCount = topCount(local);
-        Vec3 topMean = mean(local, 0, topCount);
-        List<Vec3> rendered = new ArrayList<>(local.size());
-        for (int i = 0; i < local.size(); i++) {
-            if (i < topCount)
-                rendered.add(local.get(i));
-            else
-                rendered.add(lerp(local.get(i), topMean, 1.0f - deployment));
+        float deployment = effectiveDeployment(level, be);
+        Vec3[] furled = furl(anchors, deployment);
+
+        // Bilinear patch corners: a triangle is a quad whose last edge collapses onto node 2.
+        Vec3[] c = n == 4 ? furled : new Vec3[]{furled[0], furled[1], furled[2], furled[2]};
+        int[] l = n == 4 ? lights : new int[]{lights[0], lights[1], lights[2], lights[2]};
+
+        int segU = segments(Math.max(c[0].distanceTo(c[1]), c[3].distanceTo(c[2])));
+        int segV = segments(Math.max(c[0].distanceTo(c[3]), c[1].distanceTo(c[2])));
+
+        Vec3 normal = be.localNormal();
+        double span = Math.sqrt(Math.max(be.area(), 0.0));
+        double belly = Math.min(MAX_BELLY, BELLY_PER_SPAN * span)
+                * windFill(level, be, normal, partialTicks) * deployment;
+        double time = (level.getGameTime() + partialTicks) * 0.18;
+        double flutter = FLUTTER * Math.min(1.0, span / 3.0) * deployment;
+
+        Vec3[][] grid = new Vec3[segU + 1][segV + 1];
+        for (int i = 0; i <= segU; i++) {
+            double s = i / (double) segU;
+            for (int j = 0; j <= segV; j++) {
+                double t = j / (double) segV;
+                Vec3 base = bilinear(c, s, t);
+                double shape = Math.sin(Math.PI * s) * Math.sin(Math.PI * t);
+                double wave = flutter * shape * Math.sin(time + s * 5.0 + t * 3.0);
+                grid[i][j] = base.add(normal.scale(belly * shape + wave));
+            }
         }
 
         TextureAtlasSprite sprite = Minecraft.getInstance()
                 .getTextureAtlas(InventoryMenu.BLOCK_ATLAS)
-                .apply(CANVAS);
+                .apply(canvasFor(be));
         VertexConsumer vc = buffers.getBuffer(RenderType.entityCutout(InventoryMenu.BLOCK_ATLAS));
-
-        Vec3 normal = be.localNormal();
-        Vec3 u = basisU(local);
-        Vec3 v = normal.cross(u).normalize();
-        double[] uRange = extent(local, u);
-        double[] vRange = extent(local, v);
-        double du = Math.max(1.0e-6, uRange[1] - uRange[0]);
-        double dv = Math.max(1.0e-6, vRange[1] - vRange[0]);
-
-        int packedLight = sampleLight(level, master);
         Pose pose = ms.last();
-        Matrix4f mat = pose.pose();
 
-        drawTriangle(vc, mat, pose, rendered.get(0), rendered.get(1), rendered.get(2),
-                local.get(0), local.get(1), local.get(2),
-                u, v, uRange[0], vRange[0], du, dv, normal, sprite, packedLight, overlay);
-        if (rendered.size() == 4) {
-            drawTriangle(vc, mat, pose, rendered.get(0), rendered.get(2), rendered.get(3),
-                    local.get(0), local.get(2), local.get(3),
-                    u, v, uRange[0], vRange[0], du, dv, normal, sprite, packedLight, overlay);
+        for (int i = 0; i < segU; i++) {
+            for (int j = 0; j < segV; j++) {
+                Vec3 p00 = grid[i][j], p10 = grid[i + 1][j], p11 = grid[i + 1][j + 1], p01 = grid[i][j + 1];
+                Vec3 cellNormal = p10.subtract(p00).add(p11.subtract(p01))
+                        .cross(p01.subtract(p00).add(p11.subtract(p10)));
+                if (cellNormal.lengthSqr() < 1.0e-12)
+                    cellNormal = normal;
+                else
+                    cellNormal = cellNormal.normalize();
+                if (cellNormal.dot(normal) < 0)
+                    cellNormal = cellNormal.scale(-1);
+
+                double s0 = i / (double) segU, s1 = (i + 1) / (double) segU;
+                double t0 = j / (double) segV, t1 = (j + 1) / (double) segV;
+                int l00 = light(l, s0, t0), l10 = light(l, s1, t0), l11 = light(l, s1, t1), l01 = light(l, s0, t1);
+
+                // Front face, then the back face with reversed winding so both sides survive culling.
+                emit(vc, pose, p00, 0, 0, cellNormal, sprite, l00, overlay);
+                emit(vc, pose, p10, 1, 0, cellNormal, sprite, l10, overlay);
+                emit(vc, pose, p11, 1, 1, cellNormal, sprite, l11, overlay);
+                emit(vc, pose, p01, 0, 1, cellNormal, sprite, l01, overlay);
+
+                Vec3 back = cellNormal.scale(-1);
+                emit(vc, pose, p01, 0, 1, back, sprite, l01, overlay);
+                emit(vc, pose, p11, 1, 1, back, sprite, l11, overlay);
+                emit(vc, pose, p10, 1, 0, back, sprite, l10, overlay);
+                emit(vc, pose, p00, 0, 0, back, sprite, l00, overlay);
+            }
         }
 
         if (deployment < 0.999f) {
             VertexConsumer lines = buffers.getBuffer(RenderType.lines());
             Matrix4f lineMat = ms.last().pose();
-            for (int i = topCount; i < rendered.size(); i++) {
-                Vec3 anchor = local.get(i);
-                Vec3 tip = rendered.get(i);
-                line(lines, lineMat, anchor, tip, 0.8f, 0.75f, 0.5f);
-            }
+            for (int i = 0; i < n; i++)
+                line(lines, lineMat, anchors[i], furled[i], 0.8f, 0.75f, 0.5f);
         }
+    }
+
+    private static Vec3 tip(Level level, BlockPos pos) {
+        BlockState state = level.getBlockState(pos);
+        Direction facing = state.hasProperty(BlockStateProperties.FACING)
+                ? state.getValue(BlockStateProperties.FACING) : Direction.UP;
+        return Vec3.atCenterOf(pos).add(Vec3.atLowerCornerOf(facing.getNormal()).scale(NODE_TIP));
+    }
+
+    private static ResourceLocation canvasFor(WindSailNodeBlockEntity be) {
+        return ResourceLocation.fromNamespaceAndPath("create", "block/sail/canvas_" + be.color().getSerializedName());
     }
 
     private static float effectiveDeployment(Level level, WindSailNodeBlockEntity master) {
@@ -111,88 +175,94 @@ public class WindSailNodeBlockEntityRenderer implements BlockEntityRenderer<Wind
         return 1.0f - reef;
     }
 
-    private static int topCount(List<Vec3> local) {
-        if (local.size() == 3)
-            return 1;
-        int above = 0;
-        double meanY = 0.0;
-        for (Vec3 v : local)
-            meanY += v.y;
-        meanY /= local.size();
-        for (Vec3 v : local)
-            if (v.y >= meanY)
-                above++;
-        if (above == 0)
-            return 1;
-        if (above == local.size())
-            return local.size() - 1;
-        return above;
-    }
+    /**
+     * Keeps the highest corners fixed (the yard) and lifts the rest toward them as the sail furls.
+     */
+    private static Vec3[] furl(Vec3[] anchors, float deployment) {
+        int n = anchors.length;
+        Integer[] byHeight = new Integer[n];
+        for (int i = 0; i < n; i++)
+            byHeight[i] = i;
+        Arrays.sort(byHeight, (a, b) -> Double.compare(anchors[b].y, anchors[a].y));
 
-    private static Vec3 mean(List<Vec3> local, int fromInclusive, int toExclusive) {
-        double x = 0, y = 0, z = 0;
-        int n = Math.max(1, toExclusive - fromInclusive);
-        for (int i = fromInclusive; i < toExclusive; i++) {
-            Vec3 v = local.get(i);
-            x += v.x;
-            y += v.y;
-            z += v.z;
+        int topCount = n == 3 ? 1 : 2;
+        boolean[] top = new boolean[n];
+        Vec3 topMean = Vec3.ZERO;
+        for (int k = 0; k < topCount; k++) {
+            top[byHeight[k]] = true;
+            topMean = topMean.add(anchors[byHeight[k]]);
         }
-        return new Vec3(x / n, y / n, z / n);
-    }
+        topMean = topMean.scale(1.0 / topCount);
 
-    private static Vec3 lerp(Vec3 a, Vec3 b, float t) {
-        return new Vec3(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t);
-    }
-
-    private static Vec3 basisU(List<Vec3> local) {
-        Vec3 u = local.get(1).subtract(local.get(0));
-        double len = u.length();
-        if (len < 1.0e-6)
-            u = new Vec3(1, 0, 0);
-        else
-            u = u.scale(1.0 / len);
-        return u;
-    }
-
-    private static double[] extent(List<Vec3> local, Vec3 axis) {
-        double min = Double.POSITIVE_INFINITY;
-        double max = Double.NEGATIVE_INFINITY;
-        for (Vec3 v : local) {
-            double d = v.dot(axis);
-            if (d < min)
-                min = d;
-            if (d > max)
-                max = d;
+        Vec3[] out = new Vec3[n];
+        for (int i = 0; i < n; i++) {
+            if (top[i]) {
+                out[i] = anchors[i];
+            } else {
+                // Gather under the yard rather than collapsing onto a single point.
+                Vec3 target = new Vec3(Mth.lerp(0.5, anchors[i].x, topMean.x), topMean.y - 0.15,
+                        Mth.lerp(0.5, anchors[i].z, topMean.z));
+                out[i] = anchors[i].lerp(target, 1.0f - deployment);
+            }
         }
-        return new double[]{min, max};
+        return out;
     }
 
-    private static int sampleLight(Level level, BlockPos pos) {
-        return LevelRenderer.getLightColor(level, pos);
+    /**
+     * Smoothed belly fill in [0, 1] with its side, driven by the wind across the sail's normal.
+     */
+    private double windFill(Level level, WindSailNodeBlockEntity be, Vec3 localNormal, float partialTicks) {
+        WindState state = windStates.computeIfAbsent(be, k -> new WindState());
+        long tick = level.getGameTime();
+        if (tick != state.lastTick) {
+            double target = IDLE_FILL;
+            SubLevelAccess sub = SableCompanion.INSTANCE.getContaining(level, be.getBlockPos());
+            Vector3d worldNormal = new Vector3d(localNormal.x, localNormal.y, localNormal.z);
+            Vector3d worldCenter = new Vector3d(be.localCenter().x, be.localCenter().y, be.localCenter().z);
+            if (sub != null) {
+                Pose3dc pose = sub.logicalPose();
+                pose.orientation().transform(worldNormal);
+                pose.transformPosition(worldCenter);
+            }
+            Vec3 wind = WindManager.getWind(level, worldCenter.x, worldCenter.y, worldCenter.z).vector();
+            double across = wind.x * worldNormal.x + wind.y * worldNormal.y + wind.z * worldNormal.z;
+            if (Math.abs(across) > 0.15)
+                state.sign = Math.signum(across);
+            target += (1.0 - IDLE_FILL) * Mth.clamp(Math.abs(across), 0.0, 1.0);
+
+            if (state.fill < 0 || state.lastTick == Long.MIN_VALUE || tick - state.lastTick > 20)
+                state.fill = target;
+            else
+                state.fill += Mth.clamp(target - state.fill, -0.03, 0.03) * (tick - state.lastTick);
+            state.lastTick = tick;
+        }
+        return state.fill * state.sign;
     }
 
-    private static void drawTriangle(VertexConsumer vc, Matrix4f mat, Pose pose,
-                                     Vec3 pA, Vec3 pB, Vec3 pC,
-                                     Vec3 originalA, Vec3 originalB, Vec3 originalC,
-                                     Vec3 u, Vec3 v, double uMin, double vMin, double du, double dv,
-                                     Vec3 n, TextureAtlasSprite sprite, int light, int overlay) {
-        emit(vc, mat, pose, pA, originalA, u, v, uMin, vMin, du, dv, n, sprite, light, overlay);
-        emit(vc, mat, pose, pB, originalB, u, v, uMin, vMin, du, dv, n, sprite, light, overlay);
-        emit(vc, mat, pose, pC, originalC, u, v, uMin, vMin, du, dv, n, sprite, light, overlay);
-        emit(vc, mat, pose, pC, originalC, u, v, uMin, vMin, du, dv, n, sprite, light, overlay);
+    private static int segments(double length) {
+        return Mth.clamp(Mth.ceil(length), 1, MAX_SEGMENTS);
     }
 
-    private static void emit(VertexConsumer vc, Matrix4f mat, Pose pose, Vec3 p, Vec3 originalForUv,
-                             Vec3 u, Vec3 v, double uMin, double vMin, double du, double dv,
-                             Vec3 n, TextureAtlasSprite sprite, int light, int overlay) {
-        float uCoord = (float) ((originalForUv.dot(u) - uMin) / du);
-        float vCoord = (float) ((originalForUv.dot(v) - vMin) / dv);
-        float su = sprite.getU(uCoord);
-        float sv = sprite.getV(vCoord);
-        vc.addVertex(mat, (float) p.x, (float) p.y, (float) p.z)
+    private static Vec3 bilinear(Vec3[] c, double s, double t) {
+        Vec3 bottom = c[0].lerp(c[1], s);
+        Vec3 top = c[3].lerp(c[2], s);
+        return bottom.lerp(top, t);
+    }
+
+    private static int light(int[] l, double s, double t) {
+        double w00 = (1 - s) * (1 - t), w10 = s * (1 - t), w11 = s * t, w01 = (1 - s) * t;
+        double block = w00 * LightTexture.block(l[0]) + w10 * LightTexture.block(l[1])
+                + w11 * LightTexture.block(l[2]) + w01 * LightTexture.block(l[3]);
+        double sky = w00 * LightTexture.sky(l[0]) + w10 * LightTexture.sky(l[1])
+                + w11 * LightTexture.sky(l[2]) + w01 * LightTexture.sky(l[3]);
+        return LightTexture.pack((int) Math.round(block), (int) Math.round(sky));
+    }
+
+    private static void emit(VertexConsumer vc, Pose pose, Vec3 p, float u, float v, Vec3 n,
+                             TextureAtlasSprite sprite, int light, int overlay) {
+        vc.addVertex(pose.pose(), (float) p.x, (float) p.y, (float) p.z)
                 .setColor(255, 255, 255, 255)
-                .setUv(su, sv)
+                .setUv(sprite.getU(u), sprite.getV(v))
                 .setOverlay(overlay)
                 .setLight(light)
                 .setNormal(pose, (float) n.x, (float) n.y, (float) n.z);
@@ -234,6 +304,6 @@ public class WindSailNodeBlockEntityRenderer implements BlockEntityRenderer<Wind
             maxY = Math.max(maxY, p.getY());
             maxZ = Math.max(maxZ, p.getZ());
         }
-        return new AABB(minX, minY, minZ, maxX + 1, maxY + 1, maxZ + 1).inflate(0.5);
+        return new AABB(minX, minY, minZ, maxX + 1, maxY + 1, maxZ + 1).inflate(MAX_BELLY + 0.5);
     }
 }
